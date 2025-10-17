@@ -1,0 +1,34 @@
+# # Secrets and Credentials
+# 絶対にGitに含めてはいけないファイル
+adminaccount.txt
+keys.txt
+*.json
+config.yaml
+
+# # Python cache
+# Pythonが自動生成するキャッシュファイル
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# # Virtual Environment
+# 仮想環境フォルダ（一般的な名前を網羅）
+venv/
+.venv/
+env/
+.env/
+venv.bak/
+.env.bak/
+
+# # IDE/Editor specific files
+# VSCodeやその他のエディタが自動生成する設定ファイル
+.vscode/
+.idea/
+.project
+.pydevproject
+.settings/
+
+# # Streamlit specific
+# Streamlitのローカル設定
+.streamlit/

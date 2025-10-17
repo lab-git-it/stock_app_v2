@@ -1,0 +1,9 @@
+streamlit
+pyairtable
+pandas
+qrcode
+bcrypt
+streamlit-webrtc
+opencv-python-headless
+pyyaml
+av
