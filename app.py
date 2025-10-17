@@ -1,12 +1,13 @@
-#安田研究室の消耗品管理システムのStreamlitアプリケーションのメインファイルです。
-#このファイルは、ユーザー登録、ログイン、商品管理、QRコード生成、カメラを使ったQRコードスキャンなどの機能を提供します。
-#また、管理者用の在庫数の手動更新や使用履歴の表示、QRコードの生成なども行います。
 # -*- coding: utf-8 -*-
-# 変数名変えるとスプレッドシートの連携が壊れるので注意。特にメールアドレス変数がユーザーネームになってるのは意図的です。
+# ==============================================================================
+# app.py (Airtable Version)
+# 消耗品管理システムのStreamlitアプリケーションのメインファイルです。
+# データベースとしてAirtableを使用するように改修されています。
+# ==============================================================================
 
-#---必要なライブラリのインポート---
+# --- 必要なライブラリのインポート ---
 import streamlit as st
-import database
+import database  # Airtable版のdatabase.pyをインポート
 import pandas as pd
 import qrcode
 import io
@@ -14,171 +15,185 @@ import bcrypt
 from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import cv2
 from urllib.parse import urlparse, parse_qs
-import os # osライブラリを追加
-import yaml # yamlライブラリを追加
-from yaml.loader import SafeLoader # SafeLoaderを追加
-import av # カメラのフレームを扱うために追加
+import av
 
-# --- データベースの準備 ---
-database.init_db()
+# --- ページ設定 ---
+# ページのタイトルとレイアウトを最初に設定します。
+st.set_page_config(page_title="研究室 消耗品管理システム", layout="wide")
 
-# --- ページタイトルの設定 ---
-st.set_page_config(page_title="安田研究室 消耗品管理システム", layout="wide")
-
-# --- ▼▼▼ 登録成功時のメッセージ表示ロジック ▼▼▼ ---
-if st.session_state.get("just_registered"):
-    st.toast('ユーザー登録が完了しました！')
-    # メッセージを表示したら、記憶を消す
-    del st.session_state["just_registered"]
+# --- グローバルな設定 ---
+# アプリのベースURL。QRコード生成時に使用します。
+# Streamlit Cloudにデプロイした後のURLに書き換えてください。
+APP_BASE_URL = "https://your-app-name.streamlit.app"
 
 
-# --- ▼▼▼ 管理者・マスターPINパスワードを安全に読み込むロジック ▼▼▼ ---
-admin_hashed_password = None
-master_pin_hash = None
-# クラウド環境かどうかを判定
-if "google_creds_json" in st.secrets:
-    admin_hashed_password = st.secrets.get("admin_password")
-    master_pin_hash = st.secrets.get("master_pin_hash")
-else:
-    # ローカル環境
-    if os.path.exists('config.yaml'):
-        with open('config.yaml', 'r', encoding='utf-8') as file:
-            config = yaml.load(file, Loader=SafeLoader)
-        admin_hashed_password = config.get("admin_password")
-        master_pin_hash = config.get("master_pin_hash")
+# ==============================================================================
+# 認証とログイン状態の管理
+# ==============================================================================
 
-# --- ▼▼▼ 認証ロジック▼▼▼ ---
+# --- 管理者パスワードをSecretsから安全に読み込む ---
+# Streamlit CloudのSecrets機能を使うことで、パスワードをコード内に直接書かなくて済みます。
+ADMIN_HASHED_PASSWORD = st.secrets.get("admin_password")
+MASTER_PIN_HASH = st.secrets.get("master_pin_hash")
 
-# ログイン状態の初期化
+# --- セッション状態の初期化 ---
+# st.session_stateは、ページのリロードをまたいで情報を記憶するための変数です。
+# ログイン状態などをここに保存します。
 if 'authentication_status' not in st.session_state:
     st.session_state.authentication_status = None
 if 'name' not in st.session_state:
     st.session_state.name = None
+if 'admin_unlocked' not in st.session_state:
+    st.session_state.admin_unlocked = False
 
-# --- ログイン成功時のメイン処理 ---
+# --- 登録成功時のメッセージ表示 ---
+# 新規登録直後に一度だけメッセージを表示するための仕組みです。
+if st.session_state.get("just_registered"):
+    st.toast('ユーザー登録が完了しました！')
+    # メッセージを表示したら、記憶を消して次回は表示しないようにします。
+    del st.session_state["just_registered"]
+
+
+# ==============================================================================
+# メインのアプリケーションロジック
+# ==============================================================================
+
+# --- ログイン後の画面 ---
 if st.session_state["authentication_status"]:
+    # ログインしたユーザーの名前をセッションから取得
     name = st.session_state["name"]
-    # --- サイドバーの設定 ---
+
+    # --- サイドバーの表示 ---
     st.sidebar.write(f'ようこそ、{name}さん！')
     if st.sidebar.button('ログアウト'):
-        # セッション情報をクリアしてリロード
+        # ログアウトボタンが押されたら、セッション情報を全てクリアしてリロードします。
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
 
-    # --- 管理者メニューのパスワード認証 ---
-    # サイドバーに管理者メニューを追加
     st.sidebar.divider()
-    if 'admin_unlocked' not in st.session_state:
-        st.session_state.admin_unlocked = False
-    
-    # 管理者メニューのロック状態を確認
+
+    # --- 管理者メニューの表示 ---
+    # まず、管理者メニューがロック解除されているか確認します。
     if st.session_state.admin_unlocked:
-        # --- 管理者ページ ---
-        st.sidebar.success("管理者メニュー (ロック解除済み)")
+        # --- ▼▼▼ 管理者ページ ▼▼▼ ---
         st.title('管理者メニュー')
-        if st.button('メイン画面に戻る'):
-            st.session_state.admin_unlocked = False
-            st.rerun()
 
-        # --- 在庫数の手動更新と履歴表示 ---
-        st.subheader('在庫数の手動更新(入荷、棚卸しなど)')
-        all_products_list = database.get_all_products()
-        product_options = {f"{p['name']} ({p['product_code']})": p['id'] for p in all_products_list}
-        
-        if product_options:
-            with st.form('update_stock_form', clear_on_submit=True):
-                selected_product_display_name = st.selectbox('更新する商品を選択してください', options=list(product_options.keys()))
-                quantity_change = st.number_input('数量の変更（正の値で追加、負の値で減少）', min_value=-1000, max_value=1000, value=0)
-                submit_button = st.form_submit_button('在庫数を更新')
+        # タブを使って各機能を切り替えられるようにします。
+        tab1, tab2, tab3 = st.tabs(["在庫状況", "使用履歴", "QRコード生成"])
 
-                if submit_button and quantity_change != 0:
-                    product_id = product_options[selected_product_display_name]
-                    database.update_stock(product_id, quantity_change)
-                    change_type = '入荷' if quantity_change > 0 else '棚卸調整'
-                    database.add_stock_history(product_id, name, change_type, abs(quantity_change))
-                    st.success(f"「{selected_product_display_name}」の在庫数を更新しました。")
-                    st.rerun()
-        else:
-            st.write('更新対象の商品がありません')
-        
-        st.subheader('現在の在庫一覧')
-        if all_products_list:
-            df_products = pd.DataFrame(all_products_list)
-            df_products.columns = ['id', 'product_code', 'name', 'unit', 'current_stock', 'created_at']
-            df_display = df_products[['product_code', 'name', 'current_stock', 'unit']]
-            df_display.columns = ['商品コード', '品目名', '現在庫数', '単位']
-            st.dataframe(df_display, use_container_width=True)
-        else:
-            st.write('商品はまだ登録されていません。')
-        
-        st.subheader('使用履歴')
-        all_history = database.get_all_history()
-        if all_history:
-            df_full_history = pd.DataFrame(all_history)
-            df_display_history = df_full_history[['timestamp', 'user_name', 'name', 'change_type', 'quantity']]
-            df_display_history.columns = ['日時', '使用者', '品目名', '操作', '数量']
-            st.dataframe(df_display_history, use_container_width=True)
-        else:
-            st.write('使用履歴がありません。')
-        
-        st.subheader('QRコード生成')
-        if all_products_list:
-            base_url = st.text_input("アプリのベースURLを入力", "https://ouyasudalab-stock.streamlit.app", help="デプロイ後に発行される、このアプリのURLを入力してください。")
-            product_for_qr = st.selectbox(label="QRコードを生成する備品を選択", options=[f"{p['name']} ({p['product_code']})" for p in all_products_list], index=None, placeholder="備品を選択してください...")
-            if product_for_qr:
-                selected_code = product_for_qr.split('(')[-1].replace(')', '')
-                url_to_encode = f"{base_url}?product_code={selected_code}"
-                st.write("生成されたURL:")
-                st.code(url_to_encode)
-                qr_img = qrcode.make(url_to_encode)
-                buf = io.BytesIO()
-                qr_img.save(buf, format='PNG')
-                img_bytes = buf.getvalue()
-                st.image(img_bytes, caption=f"{product_for_qr} のQRコード", width=200)
-                st.info("この画像を右クリックして保存し、印刷して使用してください。")
-        
-        st.divider()
-        st.subheader('データベース本体')
-        st.link_button("Googleスプレッドシートで在庫を直接編集する", "https://docs.google.com/spreadsheets/d/1kFw-RGElLZOLtMmijTRExBAKcSJ2yiqLR0BuqAF8G1c/edit")
+        with tab1:
+            st.subheader('現在の在庫一覧')
+            all_products_list = database.get_all_products()
+            if all_products_list:
+                # pandasのDataFrameを使って見やすい表形式で表示します。
+                df_products = pd.DataFrame(all_products_list)
+                # 表示に必要な列だけを選んで、列名を日本語にします。
+                df_display = df_products[['ProductTag', 'ProductName', 'CurrentStock', 'Unit']]
+                df_display.columns = ['商品タグ', '品目名', '現在庫数', '単位']
+                st.dataframe(df_display, use_container_width=True)
+            else:
+                st.write('商品はまだ登録されていません。')
+
+            st.divider()
+            st.subheader('データベース本体')
+            st.info("在庫数の手動更新（入荷、棚卸しなど）は、下のボタンからAirtableを開いて直接編集してください。")
+            st.link_button("Airtableで在庫を直接編集する", f"https://airtable.com/{st.secrets.get('AIRTABLE_BASE_ID')}")
+
+
+        with tab2:
+            st.subheader('使用履歴')
+            st.info("この機能は現在開発中です。")
+            # TODO: 使用履歴機能の実装。QRCodesテーブルの情報を元に表示する必要があります。
+
+
+        with tab3:
+            st.subheader('QRコード生成')
+            all_products_list = database.get_all_products()
+            if all_products_list:
+                # 商品名をプルダウンメニューで選択できるようにします。
+                product_options = {p['ProductName']: p for p in all_products_list}
+                selected_product_name = st.selectbox(
+                    label="QRコードを生成する備品を選択",
+                    options=list(product_options.keys()),
+                    index=None,
+                    placeholder="備品を選択してください..."
+                )
+
+                if selected_product_name:
+                    selected_product = product_options[selected_product_name]
+                    # 選択された商品のレコードIDとタグを取得
+                    product_record_id = selected_product.get('id') # get_all_productsはidを返さないので注意
+                    # get_product_by_tagでidを取得する必要がある
+                    product_data_with_id = database.get_product_by_tag(selected_product['ProductTag'])
+                    
+                    if product_data_with_id:
+                        product_record_id = product_data_with_id['id']
+
+                        if st.button("新しいQRコードを1つ生成する", type="primary"):
+                            # database.pyの関数を呼び出して、新しいユニークなQRコードIDを作成します。
+                            new_qrcode_id = database.create_new_qrcode(product_record_id, selected_product['ProductTag'])
+                            if new_qrcode_id:
+                                # 生成されたユニークIDを含むURLを作成
+                                url_to_encode = f"{APP_BASE_URL}?qrcode={new_qrcode_id}"
+
+                                st.success(f"新しいQRコードを生成しました: {new_qrcode_id}")
+                                st.write("生成されたURL:")
+                                st.code(url_to_encode)
+
+                                # URLを元にQRコード画像を生成して表示
+                                qr_img = qrcode.make(url_to_encode)
+                                buf = io.BytesIO()
+                                qr_img.save(buf, format='PNG')
+                                img_bytes = buf.getvalue()
+                                st.image(img_bytes, caption=f"{selected_product_name} のQRコード", width=200)
+                                st.info("この画像を右クリックして保存し、印刷して使用してください。")
+                            else:
+                                st.error("QRコードの生成に失敗しました。")
+                    else:
+                        st.error("商品のIDが取得できませんでした。")
 
 
     else:
-        # --- 通常ユーザーのメインページ（在庫利用画面） ---
+        # --- ▼▼▼ 通常ユーザーページ ▼▼▼ ---
+        # 管理者メニューがロックされている場合は、通常ユーザー向けの画面を表示します。
+
+        # --- 管理者メニューへの入り口 ---
         st.sidebar.subheader("管理者用")
         admin_password_input = st.sidebar.text_input("管理者パスワードを入力", type="password", key="admin_pass")
         if st.sidebar.button("認証"):
-            if admin_hashed_password and bcrypt.checkpw(admin_password_input.encode('utf-8'), admin_hashed_password.encode('utf-8')):
+            # 入力されたパスワードが、Secretsに保存されているハッシュ値と一致するかチェックします。
+            if ADMIN_HASHED_PASSWORD and bcrypt.checkpw(admin_password_input.encode('utf-8'), ADMIN_HASHED_PASSWORD.encode('utf-8')):
                 st.session_state.admin_unlocked = True
-                st.rerun()
+                st.rerun() # ページをリロードして管理者画面を表示
             else:
                 st.sidebar.error("パスワードが違います。")
-#---管理者側メニューここまで---
-        
-        st.title('安田研究室　消耗品管理システム')
-        
+
+        # --- メインコンテンツ ---
+        st.title('研究室　消耗品管理システム')
         st.header('使用登録')
-        
+
+        # --- QRコードスキャナー ---
+        # streamlit-webrtcを使ってカメラ映像を表示し、QRコードをリアルタイムで検出します。
+        # 検出したQRコードのデータはst.session_stateに保存されます。
         if 'scanned_code' not in st.session_state:
             st.session_state.scanned_code = None
 
         def qr_code_callback(frame: av.VideoFrame) -> av.VideoFrame:
+            """カメラの各フレームで実行される関数"""
             img = frame.to_ndarray(format="bgr24")
-            height, width, _ = img.shape
-            box_size = min(width, height) * 2 // 3
-            x_start = (width - box_size) // 2
-            y_start = (height - box_size) // 2
-            cv2.rectangle(img, (x_start, y_start), (x_start + box_size, y_start + box_size), (0, 255, 0), 2)
             qr_detector = cv2.QRCodeDetector()
             data, _, _ = qr_detector.detectAndDecode(img)
             if data:
                 try:
+                    # 読み取ったデータ（URL）から 'qrcode' パラメータを抜き出します。
                     parsed_url = urlparse(data)
                     query_params = parse_qs(parsed_url.query)
-                    if 'product_code' in query_params:
-                        st.session_state.scanned_code = query_params['product_code'][0]
+                    if 'qrcode' in query_params:
+                        # セッションにスキャン結果を保存
+                        st.session_state.scanned_code = query_params['qrcode'][0]
                 except Exception:
-                    pass
+                    pass # URL形式でない場合は無視
             return av.VideoFrame.from_ndarray(img, format="bgr24")
 
         webrtc_streamer(
@@ -190,89 +205,112 @@ if st.session_state["authentication_status"]:
         )
 
         st.markdown("---")
-        
-        active_product_code = st.session_state.get("scanned_code") or st.query_params.get("product_code")
 
-        if active_product_code:
-            if st.session_state.get('last_scanned_code') != active_product_code:
-                st.session_state.last_scanned_code = active_product_code
-                st.rerun()
+        # --- スキャン後の処理 ---
+        # URLクエリパラメータか、カメラのスキャン結果を取得します。
+        active_qrcode_id = st.session_state.get("scanned_code") or st.query_params.get("qrcode")
 
-            product = database.get_product_by_code(active_product_code)
-            if not product:
-                st.error(f"商品コード '{active_product_code}' が見つかりません。")
+        if active_qrcode_id:
+            # QRコードのデータをAirtableから取得
+            qrcode_data = database.get_qrcode_data(active_qrcode_id)
+
+            if not qrcode_data:
+                st.error(f"QRコード '{active_qrcode_id}' がデータベースに見つかりません。")
+            elif qrcode_data['fields'].get('Status') == '使用済み':
+                st.error(f"このQRコード ({active_qrcode_id}) は既に使用されています。")
             else:
-                try:
-                    current_stock = int(product['current_stock'])
-                except (ValueError, TypeError):
-                    current_stock = 0
+                # QRコードに紐づく商品情報を取得
+                product_record_id = qrcode_data['fields'].get('Product', [None])[0]
+                if product_record_id:
+                    # TODO: get_product_by_record_id のような関数が database.py に必要
+                    # 現状は全商品から探すことで代替
+                    all_prods = database.get_all_products()
+                    product = next((p for p in all_prods if p.get('id') == product_record_id), None)
+                    product_data_with_id = database.get_product_by_tag(product['ProductTag'])
+                    
+                    if not product:
+                        st.error("QRコードに紐づく商品が見つかりませんでした。")
+                    else:
+                        current_stock = int(product.get('CurrentStock', 0))
 
-                st.subheader(f"品目名: {product['name']}")
-                st.metric(label="現在の在庫数", value=f"{current_stock} {product['unit']}")
-                
-                if current_stock > 0:
-                    if st.button(f"「{product['name']}」を1つ使用する", type="primary", use_container_width=True):
-                        database.update_stock(product['id'], -1)
-                        database.add_stock_history(product['id'], name, '使用', 1)
-                        st.session_state.scanned_code = None
-                        st.session_state.last_scanned_code = None
-                        if "product_code" in st.query_params:
-                            st.query_params.clear()
-                        st.success(f"「{product['name']}」の使用を記録しました。")
-                        st.balloons()
-                        st.rerun()
-                else:
-                    st.error(f"「{product['name']}」の在庫がありません。")
+                        st.subheader(f"品目名: {product['ProductName']}")
+                        st.metric(label="現在の在庫数", value=f"{current_stock} {product.get('Unit', '')}")
+
+                        if current_stock > 0:
+                            if st.button(f"「{product['ProductName']}」を1つ使用する", type="primary", use_container_width=True):
+                                # 在庫を1つ減らす
+                                database.update_stock(product_data_with_id['id'], -1)
+                                # QRコードを「使用済み」にする
+                                database.mark_qrcode_as_used(qrcode_data['id'])
+
+                                # 処理が終わったら、スキャン状態をリセット
+                                st.session_state.scanned_code = None
+                                if "qrcode" in st.query_params:
+                                    st.query_params.clear()
+                                
+                                st.success(f"「{product['ProductName']}」の使用を記録しました。")
+                                st.balloons()
+                                # 画面をリフレッシュして最新の状態を再表示
+                                st.rerun()
+                        else:
+                            st.error(f"「{product['ProductName']}」の在庫がありません。")
+
         else:
             st.info("上のカメラでQRコードをスキャンしてください。")
 
 
-# --- ログイン前の処理 ---
+# --- ログイン前の画面 ---
 else:
-    st.title('安田研究室　消耗品管理システム')
+    st.title('研究室　消耗品管理システム')
+    # タブでログインと新規登録を切り替えます。
     login_tab, register_tab = st.tabs(["ログイン", "新規登録"])
 
     # --- ログインタブ ---
     with login_tab:
         with st.form("login_form"):
-            email = st.text_input("ユーザーネーム")
+            username = st.text_input("ユーザーネーム")
             password = st.text_input("パスワード", type="password")
             submitted = st.form_submit_button("ログイン")
             if submitted:
-                user = database.get_user(email)
-                if user and bcrypt.checkpw(password.encode('utf-8'), user['hashed_password'].encode('utf-8')):
+                # database.pyの関数を使ってユーザー情報を取得
+                user = database.get_user(username)
+                # パスワードがハッシュ値と一致するかチェック
+                if user and bcrypt.checkpw(password.encode('utf-8'), user['HashedPassword'].encode('utf-8')):
+                    # ログイン成功なら、セッションに状態を保存してリロード
                     st.session_state.authentication_status = True
-                    st.session_state.name = user['name']
+                    st.session_state.name = user['Name']
                     st.rerun()
                 else:
                     st.error("ユーザーネームまたはパスワードが間違っています。")
 
     # --- 新規登録タブ ---
     with register_tab:
-        st.info('【ご注意】\n\n- **お名前:** ログイン後に表示される名前です。\n- **ユーザーネーム:** ログインIDとして使います。半角英数字で登録してください\n- **パスワード:** 6文字以上で設定してください。')
+        st.info('研究室のメンバーは、ここでアカウントを登録してください。')
         with st.form("registration_form", clear_on_submit=True):
-            name_reg = st.text_input("お名前")
-            email_reg = st.text_input("ユーザーネーム", help="半角英数字で入力してください。")
+            name_reg = st.text_input("氏名")
+            username_reg = st.text_input("ユーザーネーム (ログインID)", help="半角英数字で入力してください。")
             password_reg = st.text_input("パスワード", type="password")
             password_rep = st.text_input("パスワード（確認用）", type="password")
-            pin_reg = st.text_input("ピンコード (内線番号下4桁)", type="password", max_chars=4)
+            pin_reg = st.text_input("共通ピンコード", type="password", max_chars=4)
             reg_submitted = st.form_submit_button("登録する")
-            
+
             if reg_submitted:
-                # 共通の暗証番号のチェック
-                pin_ok = master_pin_hash and bcrypt.checkpw(pin_reg.encode('utf-8'), master_pin_hash.encode('utf-8'))
-                # 入力チェック
+                # 入力値のバリデーション（チェック）
+                pin_ok = MASTER_PIN_HASH and bcrypt.checkpw(pin_reg.encode('utf-8'), MASTER_PIN_HASH.encode('utf-8'))
 
                 if not pin_ok:
-                    st.error("共通の暗証番号が違います。")
-                elif not (name_reg and email_reg and password_reg and password_rep):
+                    st.error("共通ピンコードが違います。")
+                elif not (name_reg and username_reg and password_reg and password_rep):
                     st.warning("すべての項目を入力してください。")
                 elif password_reg != password_rep:
                     st.error("パスワードが一致しません。")
-                elif database.get_user(email_reg):
+                elif database.get_user(username_reg):
                     st.error("このユーザーネームは既に使用されています。")
                 else:
+                    # パスワードをハッシュ化
                     hashed_password = bcrypt.hashpw(password_reg.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                    database.add_user(name_reg, email_reg, hashed_password)
+                    # データベースに新しいユーザーを追加
+                    database.add_user(name_reg, username_reg, hashed_password)
+                    # 登録成功のフラグを立ててリロード
                     st.session_state.just_registered = True
                     st.rerun()
