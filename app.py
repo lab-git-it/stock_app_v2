@@ -285,7 +285,7 @@ else:
 
     # --- 新規登録タブ ---
     with register_tab:
-        st.info('研究室のメンバーは、ここでアカウントを登録してください。')
+        st.info('アカウントを登録してください。')
         with st.form("registration_form", clear_on_submit=True):
             name_reg = st.text_input("氏名")
             username_reg = st.text_input("ユーザーネーム (ログインID)", help="半角英数字で入力してください。")
