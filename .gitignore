@@ -2,6 +2,7 @@
 # 絶対にGitに含めてはいけないファイル
 adminaccount.txt
 keys.txt
+github-recovery-codes.txt
 *.json
 config.yaml
 
