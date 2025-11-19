@@ -6,4 +6,4 @@ streamlit-webrtc
 opencv-python-headless
 pyyaml
 av
-pyairtabl>=0.13.0
+pyairtable>=0.13.0
