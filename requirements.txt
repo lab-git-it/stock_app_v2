@@ -1,4 +1,6 @@
+# requirements.txtの修正
 streamlit
+pyairtable==3.3.0  # Python 3.11で動作確認済みのバージョン
 pandas
 qrcode
 bcrypt
@@ -6,4 +8,3 @@ streamlit-webrtc
 opencv-python-headless
 pyyaml
 av
-pyairtable
