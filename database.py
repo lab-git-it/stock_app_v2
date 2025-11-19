@@ -3,7 +3,7 @@
 # ==============================================================================
 import streamlit as st
 from pyairtable import Api
-from pyairtable.api.errors import AirtableError # <--- 新しくインポート
+#from pyairtable.api.errors import AirtableError # <--- 新しくインポート
 import os
 
 # --- Airtableとの接続設定 ---
