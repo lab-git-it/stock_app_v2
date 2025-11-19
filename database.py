@@ -1,8 +1,9 @@
 # ==============================================================================
-# database.py (Airtable Version)
+# database.py (診断用パッチ適用済み)
 # ==============================================================================
 import streamlit as st
 from pyairtable import Api
+from pyairtable.api.errors import AirtableError # <--- 新しくインポート
 import os
 
 # --- Airtableとの接続設定 ---
@@ -29,8 +30,11 @@ def get_user(username):
         if records:
             return records[0]['fields']
         return None
+    except AirtableError as e: # 認証エラーなどのAPIエラーを補足
+        st.error(f"APIエラー: {e}")
+        return None
     except Exception as e:
-        st.error(f"ユーザー情報の取得に失敗しました: {e}")
+        st.error(f"予期せぬエラー: {e}")
         return None
 
 def add_user(name, username, hashed_password):
@@ -42,19 +46,28 @@ def add_user(name, username, hashed_password):
             "HashedPassword": hashed_password,
             "Role": "User"  # デフォルトは一般ユーザー
         })
+    except AirtableError as e: # <--- ここで具体的なAPIエラーをキャッチ
+        st.error("🚨 ユーザー登録がデータベースに拒否されました。以下の詳細を確認してください:")
+        st.code(str(e)) # <--- 拒否された具体的な理由（どのフィールドがダメか）が表示されます。
+        st.stop() # 処理を止めてエラーを確実に表示させる
     except Exception as e:
-        st.error(f"ユーザー登録に失敗しました: {e}")
+        st.error(f"予期せぬエラー: {e}")
 
-# --- 商品管理用の関数 ---
+# --- (以下、get_all_products以降の関数は変更なし) ---
 def get_all_products():
     """すべての商品情報を取得する"""
     try:
         all_records = products_table.all()
         # Airtableのレスポンス形式に合わせて'fields'キーからデータを抽出
         return [record['fields'] for record in all_records]
-    except Exception as e:
-        st.error(f"商品リストの取得に失敗しました: {e}")
+    except AirtableError as e:
+        st.error(f"APIエラー: {e}")
         return []
+    except Exception as e:
+        st.error(f"予期せぬエラー: {e}")
+        return []
+
+# （中略：以降の関数は省略しますが、上記のコードで全て上書きしてください）
 
 def get_product_by_tag(product_tag):
     """ProductTagで商品情報を取得する"""
@@ -64,8 +77,11 @@ def get_product_by_tag(product_tag):
             # IDも一緒に返すように変更
             return {'id': records[0]['id'], 'fields': records[0]['fields']}
         return None
+    except AirtableError as e:
+        st.error(f"APIエラー: {e}")
+        return None
     except Exception as e:
-        st.error(f"商品情報の取得に失敗しました: {e}")
+        st.error(f"予期せぬエラー: {e}")
         return None
 
 def update_stock(record_id, quantity_change):
@@ -75,8 +91,10 @@ def update_stock(record_id, quantity_change):
         current_stock = current_record['fields'].get('CurrentStock', 0)
         new_stock = current_stock + quantity_change
         products_table.update(record_id, {"CurrentStock": new_stock})
+    except AirtableError as e:
+        st.error(f"APIエラー: {e}")
     except Exception as e:
-        st.error(f"在庫の更新に失敗しました: {e}")
+        st.error(f"予期せぬエラー: {e}")
 
 # --- QRコード管理用の関数 (新規追加) ---
 def get_qrcode_data(qrcode_id):
@@ -87,8 +105,11 @@ def get_qrcode_data(qrcode_id):
             # レコードIDとフィールドデータを両方返す
             return {'id': records[0]['id'], 'fields': records[0]['fields']}
         return None
+    except AirtableError as e:
+        st.error(f"APIエラー: {e}")
+        return None
     except Exception as e:
-        st.error(f"QRコード情報の取得に失敗しました: {e}")
+        st.error(f"予期せぬエラー: {e}")
         return None
 
 def create_new_qrcode(product_record_id, product_tag):
@@ -113,13 +134,18 @@ def create_new_qrcode(product_record_id, product_tag):
         products_table.update(product_record_id, {"LatestQRCodeNum": new_num})
         
         return new_qrcode_id
+    except AirtableError as e:
+        st.error(f"APIエラー: {e}")
+        return None
     except Exception as e:
-        st.error(f"QRコードの作成に失敗しました: {e}")
+        st.error(f"予期せぬエラー: {e}")
         return None
 
 def mark_qrcode_as_used(qrcode_record_id):
     """QRコードの状態を「使用済み」に更新する"""
     try:
         qrcodes_table.update(qrcode_record_id, {"Status": "使用済み"})
+    except AirtableError as e:
+        st.error(f"APIエラー: {e}")
     except Exception as e:
-        st.error(f"QRコード状態の更新に失敗しました: {e}")
+        st.error(f"予期せぬエラー: {e}")
