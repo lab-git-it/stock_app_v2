@@ -30,12 +30,15 @@ def get_user(username):
         if records:
             return records[0]['fields']
         return None
-    except AirtableError as e: # 認証エラーなどのAPIエラーを補足
-        st.error(f"APIエラー: {e}")
-        return None
     except Exception as e:
         st.error(f"予期せぬエラー: {e}")
         return None
+    '''
+    except AirtableError as e: # 認証エラーなどのAPIエラーを補足
+        st.error(f"APIエラー: {e}")
+        return None
+    '''
+    
 
 def add_user(name, username, hashed_password):
     """新しいユーザーを登録する"""
